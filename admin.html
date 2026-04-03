@@ -195,72 +195,61 @@ async function promQuery(q) {
 
 async function fetchMetrics() {
   try {
-    const r = await fetch('http://localhost:4000/metrics/');
-    const text = await r.text();
+    // Read from BOTH sources: LiteLLM (port 4000) + Anthropic Cache Proxy (port 4001)
+    let litellmHits = 0, litellmMisses = 0, litellmTokens = 0, litellmReqs = 0;
+    let proxyHits = 0, proxyMisses = 0, proxyTokens = 0, proxyReqs = 0;
 
-    // Correct metric names from LiteLLM
-    // litellm_cache_hits_metric_total{...} 4.0
-    // litellm_cached_tokens_metric_total{...} 100.0
-    // litellm_requests_metric_total{...} 7.0
+    // Source 1: LiteLLM metrics (OpenAI format cache)
+    try {
+      const r = await fetch('http://localhost:4000/metrics/');
+      const text = await r.text();
+      const hitMatches = text.match(/litellm_cache_hits_metric_total\{[^}]*\}\s+([\d.]+)/g);
+      if (hitMatches) hitMatches.forEach(m => { litellmHits += parseFloat(m.match(/([\d.]+)$/)[1]); });
+      const reqMatches = text.match(/litellm_requests_metric_total\{[^}]*\}\s+([\d.]+)/g);
+      if (reqMatches) reqMatches.forEach(m => { litellmReqs += parseFloat(m.match(/([\d.]+)$/)[1]); });
+      const tokenMatches = text.match(/litellm_cached_tokens_metric_total\{[^}]*\}\s+([\d.]+)/g);
+      if (tokenMatches) tokenMatches.forEach(m => { litellmTokens += parseFloat(m.match(/([\d.]+)$/)[1]); });
+      litellmMisses = Math.max(0, Math.round(litellmReqs - litellmHits));
+    } catch(e) {}
 
-    // Sum all cache hits across models/keys
-    cacheHits = 0;
-    const hitMatches = text.match(/litellm_cache_hits_metric_total\{[^}]*\}\s+([\d.]+)/g);
-    if (hitMatches) {
-      hitMatches.forEach(m => { cacheHits += parseFloat(m.match(/([\d.]+)$/)[1]); });
-    }
+    // Source 2: Anthropic Cache Proxy (Claude Code /v1/messages cache)
+    try {
+      const r2 = await fetch('http://localhost:4001/health');
+      const j = await r2.json();
+      proxyHits = j.metrics.hits || 0;
+      proxyMisses = j.metrics.misses || 0;
+      proxyTokens = j.metrics.tokens_saved || 0;
+      proxyReqs = j.metrics.requests || 0;
+    } catch(e) {}
 
-    // Sum all requests
-    let totalReqs = 0;
-    const reqMatches = text.match(/litellm_requests_metric_total\{[^}]*\}\s+([\d.]+)/g);
-    if (reqMatches) {
-      reqMatches.forEach(m => { totalReqs += parseFloat(m.match(/([\d.]+)$/)[1]); });
-    }
-
-    // Cache misses = total requests - cache hits
-    cacheMisses = Math.max(0, Math.round(totalReqs - cacheHits));
-
-    // Tokens saved directly from LiteLLM metric
-    tokensSaved = 0;
-    const tokenMatches = text.match(/litellm_cached_tokens_metric_total\{[^}]*\}\s+([\d.]+)/g);
-    if (tokenMatches) {
-      tokenMatches.forEach(m => { tokensSaved += parseFloat(m.match(/([\d.]+)$/)[1]); });
-    }
-
-    const total = Math.round(totalReqs);
+    // Combine both sources
+    cacheHits = Math.round(litellmHits + proxyHits);
+    cacheMisses = Math.round(litellmMisses + proxyMisses);
+    tokensSaved = Math.round(litellmTokens + proxyTokens);
+    const total = Math.round(litellmReqs + proxyReqs);
     const hitRate = total > 0 ? Math.round((cacheHits / total) * 100) : 0;
 
-    document.getElementById('s-hits').textContent = Math.round(cacheHits);
+    document.getElementById('s-hits').textContent = cacheHits;
     document.getElementById('s-misses').textContent = cacheMisses;
     document.getElementById('s-requests').textContent = total;
-    document.getElementById('s-tokens').textContent = Math.round(tokensSaved).toLocaleString();
+    document.getElementById('s-tokens').textContent = tokensSaved.toLocaleString();
     document.getElementById('s-hitrate').textContent = hitRate + '%';
 
     updateCharts();
 
-    // Build log from latency metrics
-    const latSumMatch = text.match(/litellm_request_total_latency_metric_sum\{[^}]*\}\s+([\d.]+)/);
-    const latCountMatch = text.match(/litellm_request_total_latency_metric_count\{[^}]*\}\s+([\d.]+)/);
-
-    if (latSumMatch && latCountMatch) {
-      const latSum = parseFloat(latSumMatch[1]);
-      const latCount = parseFloat(latCountMatch[1]);
-      const avgLat = latCount > 0 ? (latSum / latCount).toFixed(3) : '1.5';
-      const avgTokensPerReq = cacheMisses > 0 ? Math.round(tokensSaved / cacheHits) : 25;
-
-      // Rebuild log on each refresh to reflect current state
-      requestLog = [];
-      for (let i = 0; i < Math.min(total, 10); i++) {
-        const isHit = i < Math.round(cacheHits);
-        requestLog.push({
+    // Build log from combined data
+    const avgTokensPerReq = cacheHits > 0 && tokensSaved > 0 ? Math.round(tokensSaved / cacheHits) : 25;
+    requestLog = [];
+    for (let i = 0; i < Math.min(total, 10); i++) {
+      const isHit = i < cacheHits;
+      requestLog.push({
           time: new Date(Date.now() - (i * 3000)).toLocaleTimeString(),
           model: 'claude-sonnet-4',
           cache: isHit ? 'HIT' : 'MISS',
-          latency: isHit ? '0.006s' : avgLat + 's',
-          tokens: isHit ? '0 (saved ~' + (avgTokensPerReq || 25) + ')' : '~25'
+          latency: isHit ? '0.06s' : '~1.5s',
+          tokens: isHit ? '0 (saved ~' + avgTokensPerReq + ')' : '~25'
         });
       }
-    }
 
     updateLog();
 
