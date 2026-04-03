@@ -105,6 +105,25 @@ services:
           cpus: '0.5'
           memory: 512M
 
+  anthropic-proxy:
+    build: ./proxy
+    container_name: anthropic-cache-proxy
+    restart: unless-stopped
+    depends_on:
+      - redis
+    env_file: .env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      CACHE_TTL: "86400"
+    ports:
+      - "4001:4001"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
 volumes:
   postgres_data:
   redis_data:
