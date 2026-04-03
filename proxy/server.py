@@ -1,12 +1,11 @@
 """
 Anthropic Cache Proxy — intercepts /v1/messages, caches in Redis, forwards to Anthropic.
-Designed to sit between Claude Desktop/Code and api.anthropic.com.
+Metrics persist in Redis so they survive container restarts.
 """
 
 import hashlib
 import json
 import os
-import time
 
 import httpx
 import redis
@@ -31,10 +30,8 @@ REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 CACHE_TTL = int(os.environ.get("CACHE_TTL", "86400"))
 ANTHROPIC_BASE = "https://api.anthropic.com"
 
-# Metrics
-metrics = {"hits": 0, "misses": 0, "tokens_saved": 0, "requests": 0}
+METRICS_KEY = "anthropic_proxy:metrics"
 
-# Redis connection
 rcache = None
 
 def get_redis():
@@ -47,9 +44,27 @@ def get_redis():
     return rcache
 
 
+def incr_metric(field, amount=1):
+    try:
+        get_redis().hincrby(METRICS_KEY, field, amount)
+    except Exception:
+        pass
+
+
+def get_metrics():
+    try:
+        m = get_redis().hgetall(METRICS_KEY)
+        return {
+            "hits": int(m.get("hits", 0)),
+            "misses": int(m.get("misses", 0)),
+            "tokens_saved": int(m.get("tokens_saved", 0)),
+            "requests": int(m.get("requests", 0)),
+        }
+    except Exception:
+        return {"hits": 0, "misses": 0, "tokens_saved": 0, "requests": 0}
+
+
 def cache_key(body: dict) -> str:
-    """Hash the request body to create a deterministic cache key."""
-    # Only hash the fields that determine the response
     key_parts = {
         "model": body.get("model", ""),
         "messages": body.get("messages", []),
@@ -63,7 +78,6 @@ def cache_key(body: dict) -> str:
 
 @app.get("/dashboard")
 async def dashboard():
-    """Serve the admin dashboard from the proxy (avoids CORS issues)."""
     dash_path = "/config/admin.html"
     if os.path.exists(dash_path):
         return FileResponse(dash_path, media_type="text/html")
@@ -77,76 +91,64 @@ async def health():
         redis_ok = True
     except Exception:
         redis_ok = False
-    return {
-        "status": "healthy" if redis_ok else "degraded",
-        "redis": redis_ok,
-        "metrics": metrics
-    }
+    return {"status": "healthy" if redis_ok else "degraded", "redis": redis_ok, "metrics": get_metrics()}
 
 
 @app.get("/metrics")
 async def prometheus_metrics():
-    """Prometheus-compatible metrics endpoint."""
+    m = get_metrics()
     lines = [
         "# HELP anthropic_cache_hits_total Total cache hits",
         "# TYPE anthropic_cache_hits_total counter",
-        f'anthropic_cache_hits_total {metrics["hits"]}',
+        f'anthropic_cache_hits_total {m["hits"]}',
         "# HELP anthropic_cache_misses_total Total cache misses",
         "# TYPE anthropic_cache_misses_total counter",
-        f'anthropic_cache_misses_total {metrics["misses"]}',
+        f'anthropic_cache_misses_total {m["misses"]}',
         "# HELP anthropic_cache_tokens_saved_total Tokens saved by cache",
         "# TYPE anthropic_cache_tokens_saved_total counter",
-        f'anthropic_cache_tokens_saved_total {metrics["tokens_saved"]}',
+        f'anthropic_cache_tokens_saved_total {m["tokens_saved"]}',
         "# HELP anthropic_cache_requests_total Total requests",
         "# TYPE anthropic_cache_requests_total counter",
-        f'anthropic_cache_requests_total {metrics["requests"]}',
+        f'anthropic_cache_requests_total {m["requests"]}',
     ]
     return Response(content="\n".join(lines) + "\n", media_type="text/plain")
 
 
 @app.api_route("/v1/messages", methods=["POST"])
 async def proxy_messages(request: Request):
-    """Main proxy: cache check → forward to Anthropic → cache response."""
-    metrics["requests"] += 1
+    incr_metric("requests")
 
-    # Read the request body
     raw_body = await request.body()
     try:
         body = json.loads(raw_body)
     except json.JSONDecodeError:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-    # Check if streaming is requested — don't cache streams
     if body.get("stream", False):
+        incr_metric("misses")
         return await forward_stream(request, raw_body, body)
 
-    # Generate cache key
     key = cache_key(body)
 
-    # Check Redis cache
     try:
         cached = get_redis().get(key)
         if cached:
-            metrics["hits"] += 1
+            incr_metric("hits")
             cached_response = json.loads(cached)
-            # Count tokens saved
             usage = cached_response.get("usage", {})
             tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-            metrics["tokens_saved"] += tokens
+            incr_metric("tokens_saved", tokens)
             return JSONResponse(cached_response)
     except Exception:
-        pass  # Redis down — proceed without cache
+        pass
 
-    # Cache miss — forward to Anthropic
-    metrics["misses"] += 1
+    incr_metric("misses")
 
-    # Build headers for Anthropic
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": request.headers.get("anthropic-version", "2023-06-01"),
         "content-type": "application/json",
     }
-    # Forward any anthropic-beta headers
     beta = request.headers.get("anthropic-beta")
     if beta:
         headers["anthropic-beta"] = beta
@@ -163,12 +165,11 @@ async def proxy_messages(request: Request):
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=502)
 
-    # Cache successful responses
     if resp.status_code == 200:
         try:
             get_redis().setex(key, CACHE_TTL, resp.text)
         except Exception:
-            pass  # Redis down — still return the response
+            pass
 
     return Response(
         content=resp.content,
@@ -178,7 +179,6 @@ async def proxy_messages(request: Request):
 
 
 async def forward_stream(request: Request, raw_body: bytes, body: dict):
-    """Forward streaming requests without caching."""
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
         "anthropic-version": request.headers.get("anthropic-version", "2023-06-01"),
@@ -200,7 +200,6 @@ async def forward_stream(request: Request, raw_body: bytes, body: dict):
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
-# Pass through any other Anthropic endpoints (models, etc.)
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def passthrough(request: Request, path: str):
     headers = {
