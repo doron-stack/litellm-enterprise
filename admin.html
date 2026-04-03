@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiteLLM Enterprise - Admin Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e1e4e8; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #1a1f35 0%, #0d1117 100%); border-bottom: 1px solid #21262d; padding: 24px 32px; }
+  .header h1 { font-size: 24px; font-weight: 600; color: #58a6ff; }
+  .header p { font-size: 14px; color: #8b949e; margin-top: 4px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; padding: 32px; max-width: 1200px; margin: 0 auto; }
+  .card { background: #161b22; border: 1px solid #21262d; border-radius: 12px; padding: 24px; transition: border-color 0.2s, transform 0.2s; cursor: pointer; text-decoration: none; color: inherit; display: block; }
+  .card:hover { border-color: #58a6ff; transform: translateY(-2px); }
+  .card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .card-icon { width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+  .card-title { font-size: 18px; font-weight: 600; }
+  .card-subtitle { font-size: 13px; color: #8b949e; }
+  .card-body { font-size: 14px; color: #8b949e; line-height: 1.6; }
+  .card-url { display: inline-block; margin-top: 12px; padding: 8px 16px; background: #21262d; border-radius: 6px; font-family: monospace; font-size: 13px; color: #58a6ff; }
+  .status-bar { display: flex; gap: 24px; padding: 16px 32px; background: #161b22; border-bottom: 1px solid #21262d; flex-wrap: wrap; }
+  .status-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #484f58; }
+  .status-dot.green { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+  .status-dot.red { background: #f85149; box-shadow: 0 0 6px #f85149; }
+  .icon-litellm { background: linear-gradient(135deg, #6e40c9, #58a6ff); }
+  .icon-prometheus { background: linear-gradient(135deg, #e6522c, #ff7b54); }
+  .icon-grafana { background: linear-gradient(135deg, #f46800, #ffb347); }
+  .icon-redis { background: linear-gradient(135deg, #dc382d, #ff6b6b); }
+  .icon-postgres { background: linear-gradient(135deg, #336791, #5b9bd5); }
+  .footer { text-align: center; padding: 24px; color: #484f58; font-size: 13px; }
+  .footer a { color: #58a6ff; text-decoration: none; }
+  .copy-btn { display: inline-block; margin-top: 8px; padding: 6px 14px; background: #238636; border: none; border-radius: 6px; color: white; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .copy-btn:hover { background: #2ea043; }
+  .cred-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 13px; }
+  .cred-row .label { color: #8b949e; min-width: 80px; }
+  .cred-row .value { color: #7ee787; user-select: all; }
+  .cred-box { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  @media (max-width: 768px) { .grid { grid-template-columns: 1fr; padding: 16px; } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>LiteLLM Enterprise Dashboard</h1>
+  <p>AI Swarm Optimized &mdash; Redis Cache + Full Monitoring Stack</p>
+</div>
+
+<div class="status-bar" id="statusBar">
+  <div class="status-item" id="s-litellm"><div class="status-dot" id="d-litellm"></div> LiteLLM :4000</div>
+  <div class="status-item" id="s-redis"><div class="status-dot" id="d-redis"></div> Redis :6379</div>
+  <div class="status-item" id="s-postgres"><div class="status-dot" id="d-postgres"></div> PostgreSQL :5432</div>
+  <div class="status-item" id="s-prometheus"><div class="status-dot" id="d-prometheus"></div> Prometheus :9090</div>
+  <div class="status-item" id="s-grafana"><div class="status-dot" id="d-grafana"></div> Grafana :3100</div>
+</div>
+
+<div class="grid">
+
+  <a class="card" href="http://localhost:4000/ui" target="_blank">
+    <div class="card-header">
+      <div class="card-icon icon-litellm">&#9889;</div>
+      <div>
+        <div class="card-title">LiteLLM Admin UI</div>
+        <div class="card-subtitle">Proxy management, models, keys, usage</div>
+      </div>
+    </div>
+    <div class="card-body">
+      Add LLM models, manage API keys, view usage logs, and monitor cache performance.
+      <div class="cred-box">
+        <div class="cred-row"><span class="label">Username:</span> <span class="value">admin</span></div>
+        <div class="cred-row"><span class="label">Password:</span> <span class="value">admin123</span></div>
+      </div>
+      <div class="card-url">http://localhost:4000/ui</div>
+    </div>
+  </a>
+
+  <a class="card" href="http://localhost:4000/metrics/" target="_blank">
+    <div class="card-header">
+      <div class="card-icon icon-litellm">&#128202;</div>
+      <div>
+        <div class="card-title">Prometheus Metrics</div>
+        <div class="card-subtitle">Raw metrics from LiteLLM proxy</div>
+      </div>
+    </div>
+    <div class="card-body">
+      Cache hits/misses, request latency, token counts, model usage. Scraped by Prometheus every 15s.
+      <div class="card-url">http://localhost:4000/metrics/</div>
+    </div>
+  </a>
+
+  <a class="card" href="http://localhost:9090" target="_blank">
+    <div class="card-header">
+      <div class="card-icon icon-prometheus">&#128293;</div>
+      <div>
+        <div class="card-title">Prometheus</div>
+        <div class="card-subtitle">Metrics storage and querying</div>
+      </div>
+    </div>
+    <div class="card-body">
+      Query with PromQL. No login needed.
+      <div class="card-url">http://localhost:9090</div>
+    </div>
+  </a>
+
+  <a class="card" href="http://localhost:3100" target="_blank">
+    <div class="card-header">
+      <div class="card-icon icon-grafana">&#128200;</div>
+      <div>
+        <div class="card-title">Grafana</div>
+        <div class="card-subtitle">Dashboards, alerts, visualisation</div>
+      </div>
+    </div>
+    <div class="card-body">
+      Build dashboards for cache hit rate, token savings, cost per model, latency.
+      <div class="cred-box">
+        <div class="cred-row"><span class="label">Username:</span> <span class="value">admin</span></div>
+        <div class="cred-row"><span class="label">Password:</span> <span class="value">adminchangeinproduction</span></div>
+      </div>
+      <div class="card-url">http://localhost:3100</div>
+    </div>
+  </a>
+
+  <div class="card" onclick="checkHealth()">
+    <div class="card-header">
+      <div class="card-icon icon-redis">&#10084;</div>
+      <div>
+        <div class="card-title">Health Check</div>
+        <div class="card-subtitle">Click to check all services</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div id="healthResult">Click this card to run a live health check against all services.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <div class="card-icon icon-postgres">&#128273;</div>
+      <div>
+        <div class="card-title">API Key</div>
+        <div class="card-subtitle">Master key for API calls</div>
+      </div>
+    </div>
+    <div class="card-body">
+      Use this key in your AI swarm or any OpenAI-compatible client:
+      <div class="cred-box">
+        <div class="cred-row" style="word-break: break-all;"><span class="value" id="apiKey">sk-9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e</span></div>
+      </div>
+      <button class="copy-btn" onclick="copyKey()">Copy API Key</button>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  Doron AI Swarm &mdash; <a href="https://github.com/doron-stack/litellm-enterprise" target="_blank">doron-stack/litellm-enterprise</a> &mdash; <a href="https://github.com/doron-stack/AI-Swarm" target="_blank">doron-stack/AI-Swarm</a>
+</div>
+
+<script>
+const API_KEY = 'sk-9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e';
+
+function copyKey() {
+  navigator.clipboard.writeText(API_KEY);
+  event.target.textContent = 'Copied!';
+  setTimeout(() => event.target.textContent = 'Copy API Key', 2000);
+}
+
+async function ping(url, id) {
+  try {
+    const r = await fetch(url, { mode: 'no-cors', signal: AbortSignal.timeout(3000) });
+    document.getElementById(id).classList.add('green');
+    document.getElementById(id).classList.remove('red');
+    return true;
+  } catch {
+    document.getElementById(id).classList.add('red');
+    document.getElementById(id).classList.remove('green');
+    return false;
+  }
+}
+
+async function checkHealth() {
+  const el = document.getElementById('healthResult');
+  el.innerHTML = 'Checking...';
+  const results = [];
+
+  const checks = [
+    { name: 'LiteLLM', url: 'http://localhost:4000/ui' },
+    { name: 'Prometheus', url: 'http://localhost:9090' },
+    { name: 'Grafana', url: 'http://localhost:3100' },
+  ];
+
+  for (const c of checks) {
+    try {
+      await fetch(c.url, { mode: 'no-cors', signal: AbortSignal.timeout(3000) });
+      results.push('<span style="color:#3fb950">&#10003; ' + c.name + '</span>');
+    } catch {
+      results.push('<span style="color:#f85149">&#10007; ' + c.name + '</span>');
+    }
+  }
+  el.innerHTML = results.join('<br>');
+}
+
+// Auto-check on load
+window.addEventListener('load', async () => {
+  await ping('http://localhost:4000/ui', 'd-litellm');
+  await ping('http://localhost:9090', 'd-prometheus');
+  await ping('http://localhost:3100', 'd-grafana');
+  // Redis and Postgres are internal — mark green if LiteLLM is up
+  if (document.getElementById('d-litellm').classList.contains('green')) {
+    document.getElementById('d-redis').classList.add('green');
+    document.getElementById('d-postgres').classList.add('green');
+  }
+});
+</script>
+
+</body>
+</html>
