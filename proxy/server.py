@@ -12,9 +12,17 @@ import httpx
 import redis
 import uvicorn
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 
 app = FastAPI(title="Anthropic Cache Proxy")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
@@ -51,6 +59,15 @@ def cache_key(body: dict) -> str:
     }
     raw = json.dumps(key_parts, sort_keys=True, ensure_ascii=True)
     return "anthropic_cache:" + hashlib.sha256(raw.encode()).hexdigest()
+
+
+@app.get("/dashboard")
+async def dashboard():
+    """Serve the admin dashboard from the proxy (avoids CORS issues)."""
+    dash_path = "/config/admin.html"
+    if os.path.exists(dash_path):
+        return FileResponse(dash_path, media_type="text/html")
+    return JSONResponse({"error": "admin.html not mounted"}, status_code=404)
 
 
 @app.get("/health")

@@ -118,6 +118,8 @@ services:
       CACHE_TTL: "86400"
     ports:
       - "4001:4001"
+    volumes:
+      - ./admin.html:/config/admin.html:ro
     deploy:
       resources:
         limits:
