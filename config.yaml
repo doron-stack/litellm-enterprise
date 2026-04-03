@@ -48,7 +48,8 @@ litellm_settings:
   failure_callback: ["prometheus"]
   num_retries: 2
   request_timeout: 120
-  set_verbose: false
+  set_verbose: true
+  cache_control_allow_anthropic_headers: true
 
 general_settings:
   master_key: "os.environ/LITELLM_MASTER_KEY"
